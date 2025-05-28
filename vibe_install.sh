@@ -1,185 +1,226 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# ASCII Art
+# Author: NTFS DEV
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Display ASCII art header
 clear
-echo -e "\e[34m##   ##   ####    ######   #######            ####    ##   ##   #####   ######     ##     ####     ####"
-echo " ##   ##    ##      ##  ##   ##   #             ##     ###  ##  ##   ##  # ## #    ####     ##       ##"
-echo "  ## ##     ##      ##  ##   ## #               ##     #### ##  #          ##     ##  ##    ##       ##"
-echo "  ## ##     ##      #####    ####               ##     ## ####   #####     ##     ##  ##    ##       ##"
-echo "   ###      ##      ##  ##   ## #               ##     ##  ###       ##    ##     ######    ##   #   ##   #"
-echo "   ###      ##      ##  ##   ##   #             ##     ##   ##  ##   ##    ##     ##  ##    ##  ##   ##  ##"
-echo "    #      ####    ######   #######            ####    ##   ##   #####    ####    ##  ##   #######  #######\e[0m"
-echo -e "\n\e[32mVibe Install - Arch Linux Automated Installer\e[0m"
-echo -e "\e[33mAuthor: NTFS DEV\e[0m\n"
+echo -e "${BLUE}"
+cat << "EOF"
+## #### ###### ####### #### ## ## ##### ###### ## ####
+## ## ## ## ## # ## ### ## ## ## # ## # #### ##
+## ##     ##      ##  ##   ## #               ##     #### ##  #          ##     ##  ##    ##       ##
+## ##     ##      #####    ####               ##     ## ####   #####     ##     ##  ##    ##       ##
+ ###      ##      ##  ##   ## #               ##     ##  ###       ##    ##     ######    ##   #   ##   #
+ ###      ##      ##  ##   ##   #             ##     ##   ##  ##   ##    ##     ##  ##    ##  ##   ##  ##
+  #      ####    ######   #######            ####    ##   ##   #####    ####    ##  ##   #######  #######
+EOF
+echo -e "${NC}"
+echo -e "${GREEN}Arch Linux Auto-Installer (Vibe Install)${NC}"
+echo -e "${YELLOW}By NTFS DEV${NC}"
+echo
 
 # Check for UEFI
-if [ ! -d "/sys/firmware/efi/efivars" ]; then
-    echo -e "\e[31mThis program only supports UEFI mode!\e[0m"
+if [ ! -d /sys/firmware/efi ]; then
+    echo -e "${RED}This program supports UEFI only!${NC}"
     exit 1
 fi
 
 # Check internet connection
-echo -e "\e[34mChecking internet connection...\e[0m"
-if ! ping -c 3 archlinux.org >/dev/null 2>&1; then
-    echo -e "\e[31mNo internet connection detected. Please connect to the internet before proceeding.\e[0m"
+echo -e "${BLUE}Checking internet connection...${NC}"
+if ! ping -c 1 archlinux.org &> /dev/null; then
+    echo -e "${RED}No internet connection detected!${NC}"
+    echo -e "${YELLOW}Please configure your network before proceeding.${NC}"
     exit 1
 fi
 
-# Select bootloader
-echo -e "\e[34mChoose your bootloader:\e[0m"
-echo "1. GRUB (recommended)"
-echo "2. rEFInd"
-read -p "Enter your choice (1-2): " bootloader_choice
+# Select disk
+disks=($(lsblk -d -p -n -l -o NAME,SIZE | grep -E 'sd|nvme|vd'))
+if [ ${#disks[@]} -eq 0 ]; then
+    echo -e "${RED}No disks found!${NC}"
+    exit 1
+fi
 
-# Get disk to install to
-lsblk
-read -p "Enter the disk to install to (e.g., sda, nvme0n1): " disk
-disk="/dev/$disk"
+echo -e "${BLUE}Available disks:${NC}"
+PS3="Select disk to install Arch Linux on: "
+select disk in "${disks[@]}"; do
+    if [ -n "$disk" ]; then
+        disk_name=$(echo "$disk" | awk '{print $1}')
+        echo -e "${GREEN}Selected disk: $disk_name${NC}"
+        break
+    else
+        echo -e "${RED}Invalid selection!${NC}"
+    fi
+done
 
-# Wipe any existing signatures
-echo -e "\e[34mWiping existing disk signatures...\e[0m"
-wipefs -a $disk
+# Confirm disk wipe
+read -p "WARNING: This will erase ALL data on $disk_name. Continue? [y/N] " confirm
+if [[ ! $confirm =~ ^[Yy]$ ]]; then
+    echo -e "${RED}Installation aborted.${NC}"
+    exit 1
+fi
 
 # Partitioning
-echo -e "\e[34mPartitioning the disk...\e[0m"
-(
-    echo g      # Create new GPT partition table
-    echo n      # Add new partition
-    echo 1      # Partition number 1
-    echo        # Default first sector
-    echo +550M  # 550MB for EFI
-    echo t      # Change partition type
-    echo 1      # EFI System
-    echo n      # Add new partition
-    echo 2      # Partition number 2
-    echo        # Default first sector
-    echo +2G    # 2GB for swap
-    echo t      # Change partition type
-    echo 2      # Select partition 2
-    echo 19     # Linux swap
-    echo n      # Add new partition
-    echo 3      # Partition number 3
-    echo        # Default first sector
-    echo        # Default last sector (rest of disk)
-    echo t      # Change partition type
-    echo 3      # Select partition 3
-    echo 20     # Linux filesystem
-    echo w      # Write changes
-) | fdisk $disk
+echo -e "${BLUE}Partitioning disk...${NC}"
+parted -s "$disk_name" mklabel gpt
+parted -s "$disk_name" mkpart primary fat32 1MiB 551MiB
+parted -s "$disk_name" set 1 esp on
+parted -s "$disk_name" mkpart primary linux-swap 551MiB 2615MiB
+parted -s "$disk_name" mkpart primary ext4 2615MiB 100%
 
-# Format partitions
-echo -e "\e[34mFormatting partitions...\e[0m"
-mkfs.fat -F32 ${disk}1
-mkswap ${disk}2
-swapon ${disk}2
-mkfs.ext4 ${disk}3
+# Formatting partitions
+echo -e "${BLUE}Formatting partitions...${NC}"
+mkfs.fat -F32 "${disk_name}1"
+mkswap "${disk_name}2"
+swapon "${disk_name}2"
+mkfs.ext4 "${disk_name}3"
 
-# Mount partitions
-echo -e "\e[34mMounting partitions...\e[0m"
-mount ${disk}3 /mnt
+# Mounting
+echo -e "${BLUE}Mounting partitions...${NC}"
+mount "${disk_name}3" /mnt
 mkdir /mnt/boot
-mount ${disk}1 /mnt/boot
+mount "${disk_name}1" /mnt/boot
 
 # Install base system
-echo -e "\e[34mInstalling base system...\e[0m"
+echo -e "${BLUE}Installing base system...${NC}"
 pacstrap /mnt base base-devel linux linux-firmware
 
 # Generate fstab
-echo -e "\e[34mGenerating fstab...\e[0m"
+echo -e "${BLUE}Generating fstab...${NC}"
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# Select kernel
-echo -e "\e[34mChoose your kernel:\e[0m"
-echo "1. Stable (linux)"
-echo "2. LTS (linux-lts)"
-echo "3. Zen (linux-zen)"
-read -p "Enter your choice (1-3): " kernel_choice
+# Bootloader selection
+echo -e "${BLUE}Bootloader selection${NC}"
+PS3="Select bootloader: "
+options=("GRUB" "rEFInd (default)")
+select opt in "${options[@]}"; do
+    case $opt in
+        "GRUB")
+            echo -e "${GREEN}Installing GRUB...${NC}"
+            arch-chroot /mnt pacman -S --noconfirm grub efibootmgr
+            arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=".*"/GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet nowatchdog"/' /mnt/etc/default/grub
+            arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+            break
+            ;;
+        "rEFInd (default)")
+            echo -e "${GREEN}Installing rEFInd...${NC}"
+            arch-chroot /mnt pacman -S --noconfirm refind
+            arch-chroot /mnt refind-install
+            break
+            ;;
+        *) echo -e "${RED}Invalid option!${NC}";;
+    esac
+done
 
-case $kernel_choice in
-    1) kernel="linux" ;;
-    2) kernel="linux-lts" ;;
-    3) kernel="linux-zen" ;;
-    *) kernel="linux" ;;
-esac
+# Kernel selection
+echo -e "${BLUE}Kernel selection${NC}"
+PS3="Select kernel: "
+kernels=("linux (default)" "linux-lts" "linux-zen" "linux-hardened")
+select kernel in "${kernels[@]}"; do
+    case $kernel in
+        "linux (default)")
+            echo -e "${GREEN}Using default linux kernel${NC}"
+            break
+            ;;
+        "linux-lts")
+            echo -e "${GREEN}Installing LTS kernel...${NC}"
+            arch-chroot /mnt pacman -S --noconfirm linux-lts
+            break
+            ;;
+        "linux-zen")
+            echo -e "${GREEN}Installing Zen kernel...${NC}"
+            arch-chroot /mnt pacman -S --noconfirm linux-zen
+            break
+            ;;
+        "linux-hardened")
+            echo -e "${GREEN}Installing Hardened kernel...${NC}"
+            arch-chroot /mnt pacman -S --noconfirm linux-hardened
+            break
+            ;;
+        *) echo -e "${RED}Invalid option!${NC}";;
+    esac
+done
 
-# Install selected kernel
-if [ "$kernel" != "linux" ]; then
-    echo -e "\e[34mInstalling $kernel...\e[0m"
-    pacstrap /mnt $kernel
+# System configuration
+echo -e "${BLUE}Configuring system...${NC}"
+
+# Hostname
+read -p "Enter hostname [archlinux]: " hostname
+hostname=${hostname:-archlinux}
+echo "$hostname" > /mnt/etc/hostname
+
+# Username
+read -p "Enter username [NTFSDEV]: " username
+username=${username:-NTFSDEV}
+arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$username"
+
+# Password
+echo -e "${YELLOW}Set root password:${NC}"
+arch-chroot /mnt passwd
+echo -e "${YELLOW}Set password for $username:${NC}"
+arch-chroot /mnt passwd "$username"
+
+# Locales
+echo -e "${BLUE}Configuring locales...${NC}"
+sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /mnt/etc/locale.gen
+sed -i 's/^#ru_RU.UTF-8/ru_RU.UTF-8/' /mnt/etc/locale.gen
+arch-chroot /mnt locale-gen
+echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
+
+# Timezone
+arch-chroot /mnt ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+arch-chroot /mnt hwclock --systohc
+
+# Network configuration
+echo -e "${BLUE}Configuring network...${NC}"
+arch-chroot /mnt pacman -S --noconfirm networkmanager
+arch-chroot /mnt systemctl enable NetworkManager
+
+# Sudo configuration
+echo -e "${BLUE}Configuring sudo...${NC}"
+sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
+
+# Shell installation
+read -p "Install additional shells? [y/N] " install_shell
+if [[ $install_shell =~ ^[Yy]$ ]]; then
+    echo -e "${BLUE}Available shells:${NC}"
+    PS3="Select shell to install: "
+    shells=("zsh" "fish" "bash-completion" "All of the above")
+    select shell in "${shells[@]}"; do
+        case $shell in
+            "zsh")
+                arch-chroot /mnt pacman -S --noconfirm zsh
+                break
+                ;;
+            "fish")
+                arch-chroot /mnt pacman -S --noconfirm fish
+                break
+                ;;
+            "bash-completion")
+                arch-chroot /mnt pacman -S --noconfirm bash-completion
+                break
+                ;;
+            "All of the above")
+                arch-chroot /mnt pacman -S --noconfirm zsh fish bash-completion
+                break
+                ;;
+            *) echo -e "${RED}Invalid option!${NC}";;
+        esac
+    done
 fi
 
-# Chroot setup
-echo -e "\e[34mConfiguring the system...\e[0m"
-arch-chroot /mnt /bin/bash <<EOF
-    # Set timezone
-    ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
-    hwclock --systohc
+# Final steps
+echo -e "${GREEN}Installation complete!${NC}"
+echo -e "${YELLOW}You can now reboot into your new Arch Linux installation.${NC}"
+echo -e "${BLUE}Don't forget to:${NC}"
+echo -e "${BLUE}1. Remove installation media${NC}"
+echo -e "${BLUE}2. Run 'reboot' command${NC}"
 
-    # Localization
-    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-    echo "ru_RU.UTF-8 UTF-8" >> /etc/locale.gen
-    locale-gen
-    echo "LANG=en_US.UTF-8" > /etc/locale.conf
-
-    # Network configuration
-    echo "arch" > /etc/hostname
-    echo "127.0.0.1 localhost" >> /etc/hosts
-    echo "::1 localhost" >> /etc/hosts
-    echo "127.0.1.1 arch.localdomain arch" >> /etc/hosts
-
-    # Install and configure bootloader
-    if [ "$bootloader_choice" = "1" ]; then
-        pacman -S --noconfirm grub efibootmgr
-        grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
-        sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=".*"/GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet nowatchdog"/' /etc/default/grub
-        grub-mkconfig -o /boot/grub/grub.cfg
-    else
-        pacman -S --noconfirm refind
-        refind-install
-    fi
-
-    # Set root password
-    echo "Setting root password:"
-    passwd
-
-    # Install additional packages
-    pacman -S --noconfirm sudo networkmanager nano
-
-    # Enable services
-    systemctl enable NetworkManager
-
-    # Create a user
-    read -p "Do you want to create a user? [y/n]: " create_user
-    if [ "$create_user" = "y" ]; then
-        read -p "Enter username: " username
-        useradd -m -G wheel -s /bin/bash $username
-        echo "Setting password for $username:"
-        passwd $username
-        echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
-    fi
-
-    # Install desktop environment
-    read -p "Do you want to install a desktop environment? [y/n]: " install_de
-    if [ "$install_de" = "y" ]; then
-        echo "Available desktop environments:"
-        echo "1. GNOME"
-        echo "2. KDE Plasma"
-        echo "3. XFCE"
-        echo "4. LXDE"
-        read -p "Enter your choice (1-4): " de_choice
-
-        case $de_choice in
-            1) pacman -S --noconfirm gnome gdm; systemctl enable gdm ;;
-            2) pacman -S --noconfirm plasma sddm; systemctl enable sddm ;;
-            3) pacman -S --noconfirm xfce4 lightdm; systemctl enable lightdm ;;
-            4) pacman -S --noconfirm lxde lxdm; systemctl enable lxdm ;;
-        esac
-    fi
-EOF
-
-# Cleanup and reboot
-echo -e "\e[32mInstallation complete!\e[0m"
-umount -R /mnt
-echo -e "\e[34mRebooting in 5 seconds...\e[0m"
-sleep 5
-reboot
+exit 0
